@@ -5,21 +5,22 @@ IF OBJECT_ID('dbo.sp_Develop') IS NULL
 GO
 
 ALTER PROCEDURE dbo.sp_Develop
-    @DatabaseName      nvarchar(128) = NULL /*Defaults to current DB if not specified*/
-   ,@GetAllDatabases   bit           = 0
-   ,@BringThePain      bit           = 0
-   ,@SkipCheckServer   nvarchar(128) = NULL
-   ,@SkipCheckDatabase nvarchar(128) = NULL
-   ,@SkipCheckSchema   nvarchar(128) = NULL
-   ,@SkipCheckTable    nvarchar(128) = NULL
-   ,@OutputType        varchar(20)   = 'TABLE'
-   ,@ShowSummary       bit           = 0
-   ,@PriorityOrHigher  varchar(8)    = NULL /* Critical, High, Medium, Low, or NULL */
-   ,@RunCheckIds       varchar(MAX)  = NULL /* Pass a comma delimited list of CheckIds like 1,2,3 if you only need a limited number of checks to run */
-   ,@Debug             int           = 0
-   ,@Version           varchar(30)   = NULL OUTPUT
-   ,@VersionDate       datetime      = NULL OUTPUT
-   ,@VersionCheckMode  bit           = 0
+    @GenerationLevel   VARCHAR(10)   = 'GEN1'
+   ,@DatabaseName      NVARCHAR(128) = NULL /*Defaults to current DB if not specified*/
+   ,@GetAllDatabases   BIT           = 0
+   ,@BringThePain      BIT           = 0
+   ,@SkipCheckServer   NVARCHAR(128) = NULL
+   ,@SkipCheckDatabase NVARCHAR(128) = NULL
+   ,@SkipCheckSchema   NVARCHAR(128) = NULL
+   ,@SkipCheckTable    NVARCHAR(128) = NULL
+   ,@OutputType        VARCHAR(20)   = 'TABLE'
+   ,@ShowSummary       BIT           = 0
+   ,@PriorityOrHigher  VARCHAR(8)    = NULL /* Critical, High, Medium, Low, or NULL */
+   ,@RunCheckIds       VARCHAR(MAX)  = NULL /* Pass a comma delimited list of CheckIds like 1,2,3 if you only need a limited number of checks to run */
+   ,@Debug             INT           = 0
+   ,@Version           VARCHAR(30)   = NULL OUTPUT
+   ,@VersionDate       DATETIME      = NULL OUTPUT
+   ,@VersionCheckMode  BIT           = 0
 WITH RECOMPILE
 AS
     BEGIN
@@ -54,8 +55,23 @@ AS
         **********************************************************************************************************************/
 
         /**********************************************************************************************************************
-	    ** Declare some varibles
+	    ** Declare some variables
 	    **********************************************************************************************************************/
+
+
+        /**********************************************************************************************************************
+        Greystone Generation Checks
+
+        Generation 1:
+            - views prefixed with vw
+            - stored procedures prefixed with usp
+            - functions prefixed with fn
+            - ID is a valid surrogate key ID field.
+
+        Generation 2:
+
+
+        **********************************************************************************************************************/
 
         DECLARE
             @LineFeed            nvarchar(5)
@@ -671,6 +687,7 @@ AS
 					        INNER JOIN ' + QUOTENAME(@DatabaseName) + N'.sys.schemas AS S ON O.schema_id = S.schema_id
 				        WHERE
 					        O.type IN (''U'', ''V'')
+                            AND O.is_ms_shipped = 0
 					        AND RIGHT(O.name COLLATE SQL_Latin1_General_CP1_CI_AS, 1) = ''S''
 					        AND RIGHT(O.name COLLATE SQL_Latin1_General_CP1_CI_AS, 2) <> ''SS''
                             AND RIGHT(O.name COLLATE SQL_Latin1_General_CP1_CI_AS, 4) NOT IN (''news'', ''plus'', ''thus'', ''goes'', ''bars'', ''axis'', ''bias'', ''iris'', ''kris'', ''nous'', ''osis'', ''itis'', ''tics'', ''opus'')
@@ -764,6 +781,7 @@ AS
 					        C.name COLLATE SQL_Latin1_General_CP1_CI_AS LIKE ''%'' + T.name COLLATE SQL_Latin1_General_CP1_CI_AS + ''%''
 					        AND C.name NOT IN (''InvoiceDate'', ''InvoiceNumber'', ''PartNumber'', ''CustomerNumber'', ''GroupName'', ''StateCode'', ''PhoneNumber'')
 					        AND C.name COLLATE SQL_Latin1_General_CP1_CI_AS <> T.name COLLATE SQL_Latin1_General_CP1_CI_AS + ''Id''
+                            AND T.is_ms_shipped = 0
                         OPTION (RECOMPILE);';
 
 			        EXEC sys.sp_executesql @stmt = @StringToExecute;
@@ -792,6 +810,7 @@ AS
 					        INNER JOIN ' + QUOTENAME(@DatabaseName) + N'.sys.schemas AS S ON T.schema_id = S.schema_id
 				        WHERE
 					        C.name COLLATE SQL_Latin1_General_CP1_CI_AS IN (''name'', ''description'', ''comment'', ''code'', ''type'', ''status'', ''date'', ''time'', ''key'', ''value'', ''term'', ''class'', ''style'', ''segment'', ''default'', ''primary'', ''deleted'', ''active'', ''inactive'', ''permission'', ''locked'', ''number'', ''amount'', ''total'', ''quantity'', ''weight'', ''percent'', ''rate'', ''cost'', ''price'', ''balance'', ''average'', ''discount'', ''limit'', ''due'', ''fee'', ''fine'', ''stamp'', ''flag'', ''slug'', ''level'', ''url'', ''email'', ''address'', ''subject'', ''body'', ''alias'', ''state'', ''format'', ''group'')
+                            AND T.is_ms_shipped = 0
                         OPTION (RECOMPILE);';
 
 			        EXEC sys.sp_executesql @stmt = @StringToExecute;
@@ -807,45 +826,94 @@ AS
 		           ,@Finding       = 'Using Prefix in Name'
 		           ,@URLAnchor     = 'naming-conventions#2';
 		        /**********************************************************************************************************************/
+                /*
+                Greystone Generation 1
+                Removed hits on prefixes vw, usp, PK, IX.
+
+                */
 		        IF NOT EXISTS (SELECT 1 FROM #SkipCheck AS SC WHERE SC.CheckId = @CheckId AND SC.ObjectName IS NULL)
 		        BEGIN
 			        IF @Debug IN (1, 2) RAISERROR(N'Running CheckId [%d]', 0, 1, @CheckId) WITH NOWAIT;
 			
-			        SET @StringToExecute = N'
-				        INSERT INTO
-					        #Finding (CheckId, Database_Id, DatabaseName, FindingGroup, Finding, URL, Priority, Schema_Id, SchemaName, Object_Id, ObjectName, ObjectType, Details)
-				        SELECT
-					        CheckId       = ' + CAST(@CheckId AS NVARCHAR(MAX)) + N'
-				           ,Database_Id   = ' + CAST(@DatabaseId AS NVARCHAR(MAX)) + N'
-				           ,DatabaseName  = ''' + CAST(@DatabaseName AS NVARCHAR(MAX)) + N'''
-				           ,FindingGroup  = ''' + CAST(@FindingGroup AS NVARCHAR(MAX)) + N'''
-				           ,Finding       = ''' + CAST(@Finding AS NVARCHAR(MAX)) + N'''
-				           ,URL           = ''' + CAST(@URLBase + @URLAnchor AS NVARCHAR(MAX)) + N'''
-                           ,Priority      = CASE WHEN O.type_desc COLLATE SQL_Latin1_General_CP1_CI_AS LIKE ''%constraint%'' THEN 30 ELSE ' + CAST(@Priority AS NVARCHAR(MAX)) + N' END
-				           ,Schema_Id     = S.schema_id
-				           ,SchemaName    = S.name
-				           ,Object_Id     = O.object_id
-				           ,ObjectName    = O.name
-				           ,ObjectType    = O.type_desc
-				           ,Details       = N''Never use a prefix such as tbl, sp, vw in names.''
-				        FROM
-					        ' + QUOTENAME(@DatabaseName) + N'.sys.objects AS O
-					        INNER JOIN ' + QUOTENAME(@DatabaseName) + N'.sys.schemas AS S ON O.schema_id = S.schema_id
-				        WHERE
-                            O.name COLLATE SQL_Latin1_General_CP1_CI_AS NOT IN (''sp_Develop'', ''spCRUDGen'', ''sp_alterdiagram'', ''sp_creatediagram'', ''sp_dropdiagram'', ''sp_helpdiagramdefinition'', ''sp_helpdiagrams'', ''sp_renamediagram'', ''sp_upgraddiagrams'', ''fn_diagramobjects'', ''sp_WhoIsActive'', ''sp_HumanEvents'', ''sp_BlitzWho'', ''sp_BlitzCache'', ''sp_BlitzFirst'', ''sp_BlitzIndex'', ''sp_BlitzInMemoryOLTP'', ''sp_BlitzLock'', ''sp_BlitzQueryStore'', ''sp_PressureDetector'', ''sp_QuickieStore'')
-					        AND (
-		                            LEFT(O.name COLLATE SQL_Latin1_General_CP1_CI_AS, 6) IN (''covix_'', ''ncldx_'', ''clidx_'')
-                                    OR LEFT(O.name COLLATE SQL_Latin1_General_CP1_CI_AS, 5) IN (''pknc_'', ''ncak_'', ''clix_'', ''_dta_'')
-                                    OR LEFT(O.name COLLATE SQL_Latin1_General_CP1_CI_AS, 4) IN (''tab_'', ''pkc_'', ''idx_'', ''cak_'', ''unq_'', ''chk_'', ''ftx_'', ''gis_'', ''usp_'', ''trg_'')
-			                        OR LEFT(O.name COLLATE SQL_Latin1_General_CP1_CI_AS, 3) IN (''tbl'', ''sp_'', ''xp_'', ''dt_'', ''fn_'', ''tr_'', ''usp'', ''usr'', ''uc_'', ''nk_'', ''ak_'', ''nc_'', ''ix_'', ''ux_'', ''uk_'', ''fk_'', ''uq_'', ''df_'')
-			                        OR LEFT(O.name COLLATE SQL_Latin1_General_CP1_CI_AS, 2) IN (''tb'', ''t_'', ''vw'', ''fn'', ''p_'', ''f_'')
-							        OR O.name LIKE ''[v][A-Z]%'' COLLATE Latin1_General_BIN
-							        OR O.name LIKE ''[t][A-Z]%'' COLLATE Latin1_General_BIN
-							        OR O.name LIKE ''[s][p][A-Z]%'' COLLATE Latin1_General_BIN
-							        OR O.name LIKE ''[t][r][A-Z]%'' COLLATE Latin1_General_BIN
-						        )
-                        OPTION (RECOMPILE);';
-                        
+
+                IF @GenerationLevel = 'GEN1'
+                    BEGIN
+			            SET @StringToExecute = N'
+				            INSERT INTO
+					            #Finding (CheckId, Database_Id, DatabaseName, FindingGroup, Finding, URL, Priority, Schema_Id, SchemaName, Object_Id, ObjectName, ObjectType, Details)
+				            SELECT
+					            CheckId       = ' + CAST(@CheckId AS NVARCHAR(MAX)) + N'
+				               ,Database_Id   = ' + CAST(@DatabaseId AS NVARCHAR(MAX)) + N'
+				               ,DatabaseName  = ''' + CAST(@DatabaseName AS NVARCHAR(MAX)) + N'''
+				               ,FindingGroup  = ''' + CAST(@FindingGroup AS NVARCHAR(MAX)) + N'''
+				               ,Finding       = ''' + CAST(@Finding AS NVARCHAR(MAX)) + N'''
+				               ,URL           = ''' + CAST(@URLBase + @URLAnchor AS NVARCHAR(MAX)) + N'''
+                               ,Priority      = CASE WHEN O.type_desc COLLATE SQL_Latin1_General_CP1_CI_AS LIKE ''%constraint%'' THEN 30 ELSE ' + CAST(@Priority AS NVARCHAR(MAX)) + N' END
+				               ,Schema_Id     = S.schema_id
+				               ,SchemaName    = S.name
+				               ,Object_Id     = O.object_id
+				               ,ObjectName    = O.name
+				               ,ObjectType    = O.type_desc
+				               ,Details       = N''Never use a prefix such as tbl, sp, vw in names.''
+				            FROM
+					            ' + QUOTENAME(@DatabaseName) + N'.sys.objects AS O
+					            INNER JOIN ' + QUOTENAME(@DatabaseName) + N'.sys.schemas AS S ON O.schema_id = S.schema_id
+				            WHERE
+                                O.name COLLATE SQL_Latin1_General_CP1_CI_AS NOT IN (''sp_Develop'', ''spCRUDGen'', ''sp_alterdiagram'', ''sp_creatediagram'', ''sp_dropdiagram'', ''sp_helpdiagramdefinition'', ''sp_helpdiagrams'', ''sp_renamediagram'', ''sp_upgraddiagrams'', ''fn_diagramobjects'', ''sp_WhoIsActive'', ''sp_HumanEvents'', ''sp_BlitzWho'', ''sp_BlitzCache'', ''sp_BlitzFirst'', ''sp_BlitzIndex'', ''sp_BlitzInMemoryOLTP'', ''sp_BlitzLock'', ''sp_BlitzQueryStore'', ''sp_PressureDetector'', ''sp_QuickieStore'')
+                                AND O.is_ms_shipped = 0
+					            AND (
+		                                LEFT(O.name COLLATE SQL_Latin1_General_CP1_CI_AS, 6) IN (''covix_'', ''ncldx_'', ''clidx_'')
+                                        OR LEFT(O.name COLLATE SQL_Latin1_General_CP1_CI_AS, 5) IN (''pknc_'', ''ncak_'', ''clix_'', ''_dta_'')
+                                        OR LEFT(O.name COLLATE SQL_Latin1_General_CP1_CI_AS, 4) IN (''tab_'', ''pkc_'', ''idx_'', ''cak_'', ''unq_'', ''chk_'', ''ftx_'', ''gis_'', ''trg_'')
+			                            OR LEFT(O.name COLLATE SQL_Latin1_General_CP1_CI_AS, 3) IN (''tbl'', ''sp_'', ''xp_'', ''dt_'', ''fn_'', ''tr_'', ''usr'', ''uc_'', ''nk_'', ''ak_'', ''nc_'', ''ux_'', ''uk_'', ''fk_'', ''uq_'')
+			                            OR LEFT(O.name COLLATE SQL_Latin1_General_CP1_CI_AS, 2) IN (''tb'', ''t_'', ''p_'', ''f_'')
+							            OR O.name LIKE ''[v][A-Z]%'' COLLATE Latin1_General_BIN
+							            OR O.name LIKE ''[t][A-Z]%'' COLLATE Latin1_General_BIN
+							            OR O.name LIKE ''[s][p][A-Z]%'' COLLATE Latin1_General_BIN
+							            OR O.name LIKE ''[t][r][A-Z]%'' COLLATE Latin1_General_BIN
+						            )
+                            OPTION (RECOMPILE);';
+                        END
+
+                    IF @GenerationLevel = 'GEN2'
+                        BEGIN
+			            SET @StringToExecute = N'
+				            INSERT INTO
+					            #Finding (CheckId, Database_Id, DatabaseName, FindingGroup, Finding, URL, Priority, Schema_Id, SchemaName, Object_Id, ObjectName, ObjectType, Details)
+				            SELECT
+					            CheckId       = ' + CAST(@CheckId AS NVARCHAR(MAX)) + N'
+				               ,Database_Id   = ' + CAST(@DatabaseId AS NVARCHAR(MAX)) + N'
+				               ,DatabaseName  = ''' + CAST(@DatabaseName AS NVARCHAR(MAX)) + N'''
+				               ,FindingGroup  = ''' + CAST(@FindingGroup AS NVARCHAR(MAX)) + N'''
+				               ,Finding       = ''' + CAST(@Finding AS NVARCHAR(MAX)) + N'''
+				               ,URL           = ''' + CAST(@URLBase + @URLAnchor AS NVARCHAR(MAX)) + N'''
+                               ,Priority      = CASE WHEN O.type_desc COLLATE SQL_Latin1_General_CP1_CI_AS LIKE ''%constraint%'' THEN 30 ELSE ' + CAST(@Priority AS NVARCHAR(MAX)) + N' END
+				               ,Schema_Id     = S.schema_id
+				               ,SchemaName    = S.name
+				               ,Object_Id     = O.object_id
+				               ,ObjectName    = O.name
+				               ,ObjectType    = O.type_desc
+				               ,Details       = N''Never use a prefix such as tbl, sp, vw in names.''
+				            FROM
+					            ' + QUOTENAME(@DatabaseName) + N'.sys.objects AS O
+					            INNER JOIN ' + QUOTENAME(@DatabaseName) + N'.sys.schemas AS S ON O.schema_id = S.schema_id
+				            WHERE
+                                O.name COLLATE SQL_Latin1_General_CP1_CI_AS NOT IN (''sp_Develop'', ''spCRUDGen'', ''sp_alterdiagram'', ''sp_creatediagram'', ''sp_dropdiagram'', ''sp_helpdiagramdefinition'', ''sp_helpdiagrams'', ''sp_renamediagram'', ''sp_upgraddiagrams'', ''fn_diagramobjects'', ''sp_WhoIsActive'', ''sp_HumanEvents'', ''sp_BlitzWho'', ''sp_BlitzCache'', ''sp_BlitzFirst'', ''sp_BlitzIndex'', ''sp_BlitzInMemoryOLTP'', ''sp_BlitzLock'', ''sp_BlitzQueryStore'', ''sp_PressureDetector'', ''sp_QuickieStore'')
+                                AND O.is_ms_shipped = 0
+					            AND (
+	                                    LEFT(O.name COLLATE SQL_Latin1_General_CP1_CI_AS, 6) IN (''covix_'', ''ncldx_'', ''clidx_'')
+                                        OR LEFT(O.name COLLATE SQL_Latin1_General_CP1_CI_AS, 5) IN (''pknc_'', ''ncak_'', ''clix_'', ''_dta_'')
+                                        OR LEFT(O.name COLLATE SQL_Latin1_General_CP1_CI_AS, 4) IN (''tab_'', ''pkc_'', ''idx_'', ''cak_'', ''unq_'', ''chk_'', ''ftx_'', ''gis_'', ''usp_'', ''trg_'')
+			                            OR LEFT(O.name COLLATE SQL_Latin1_General_CP1_CI_AS, 3) IN (''tbl'', ''sp_'', ''xp_'', ''dt_'', ''fn_'', ''tr_'', ''usp'', ''usr'', ''uc_'', ''nk_'', ''ak_'', ''nc_'', ''ix_'', ''ux_'', ''uk_'', ''fk_'', ''uq_'', ''df_'')
+			                            OR LEFT(O.name COLLATE SQL_Latin1_General_CP1_CI_AS, 2) IN (''tb'', ''t_'', ''vw'', ''fn'', ''p_'', ''f_'')
+							            OR O.name LIKE ''[v][A-Z]%'' COLLATE Latin1_General_BIN
+							            OR O.name LIKE ''[t][A-Z]%'' COLLATE Latin1_General_BIN
+							            OR O.name LIKE ''[s][p][A-Z]%'' COLLATE Latin1_General_BIN
+							            OR O.name LIKE ''[t][r][A-Z]%'' COLLATE Latin1_General_BIN
+						            )
+                            OPTION (RECOMPILE);';
+
+                        END;
 			        EXEC sys.sp_executesql @stmt = @StringToExecute;
 			        IF @Debug = 2 AND @StringToExecute IS NOT NULL PRINT @StringToExecute;
 		
@@ -917,6 +985,68 @@ AS
 				        IF @Debug = 2 AND @StringToExecute IS NOT NULL PRINT @StringToExecute;
 		        END;
 
+
+
+
+		        /**********************************************************************************************************************/
+		        SELECT
+			        @CheckId       = 2
+		           ,@Priority      = 10
+		           ,@FindingGroup  = 'Naming Conventions'
+		           ,@Finding       = 'Missing Greystone Prefix in Name'
+		           ,@URLAnchor     = '';
+		        /**********************************************************************************************************************/
+                /*
+                Greystone Generation 1
+
+                vw for views
+                usp for stored procedures
+                fn for functions
+
+                */
+		        IF NOT EXISTS (SELECT 1 FROM #SkipCheck AS SC WHERE SC.CheckId = @CheckId AND SC.ObjectName IS NULL)
+		        BEGIN
+			        IF @Debug IN (1, 2) RAISERROR(N'Running CheckId [%d]', 0, 1, @CheckId) WITH NOWAIT;
+
+                    IF @GenerationLevel = 'GEN1'
+                    BEGIN
+			            SET @StringToExecute = N'
+				            INSERT INTO
+					            #Finding (CheckId, Database_Id, DatabaseName, FindingGroup, Finding, URL, Priority, Schema_Id, SchemaName, Object_Id, ObjectName, ObjectType, Details)
+				            SELECT
+					            CheckId       = ' + CAST(@CheckId AS NVARCHAR(MAX)) + N'
+				               ,Database_Id   = ' + CAST(@DatabaseId AS NVARCHAR(MAX)) + N'
+				               ,DatabaseName  = ''' + CAST(@DatabaseName AS NVARCHAR(MAX)) + N'''
+				               ,FindingGroup  = ''' + CAST(@FindingGroup AS NVARCHAR(MAX)) + N'''
+				               ,Finding       = ''' + CAST(@Finding AS NVARCHAR(MAX)) + N'''
+				               ,URL           = ''https://greycogit.sharepoint.com/:w:/t/20186-2437/EQ_sOkYg8pxPp5S5GGYLcaIBzeCMySCvGTi1Nadg1dlSkA?e=wgjzDQ'''  + N'
+                               ,Priority      = CASE WHEN O.type_desc COLLATE SQL_Latin1_General_CP1_CI_AS LIKE ''%constraint%'' THEN 30 ELSE ' + CAST(@Priority AS NVARCHAR(MAX)) + N' END
+				               ,Schema_Id     = S.schema_id
+				               ,SchemaName    = S.name
+				               ,Object_Id     = O.object_id
+				               ,ObjectName    = O.name
+				               ,ObjectType    = O.type_desc
+				               ,Details       = N''GEN 1: Name with vw for views, usp for procs, fn for functions.''
+				            FROM
+					            ' + QUOTENAME(@DatabaseName) + N'.sys.objects AS O
+					            INNER JOIN ' + QUOTENAME(@DatabaseName) + N'.sys.schemas AS S ON O.schema_id = S.schema_id
+				            WHERE
+                                O.name COLLATE SQL_Latin1_General_CP1_CI_AS NOT IN (''sp_Develop'', ''spCRUDGen'', ''sp_alterdiagram'', ''sp_creatediagram'', ''sp_dropdiagram'', ''sp_helpdiagramdefinition'', ''sp_helpdiagrams'', ''sp_renamediagram'', ''sp_upgraddiagrams'', ''fn_diagramobjects'', ''sp_WhoIsActive'', ''sp_HumanEvents'', ''sp_BlitzWho'', ''sp_BlitzCache'', ''sp_BlitzFirst'', ''sp_BlitzIndex'', ''sp_BlitzInMemoryOLTP'', ''sp_BlitzLock'', ''sp_BlitzQueryStore'', ''sp_PressureDetector'', ''sp_QuickieStore'')
+                        	    AND (
+		                                (O.type = ''V'' AND LEFT(O.name COLLATE SQL_Latin1_General_CP1_CI_AS, 2) <> ''vw'')
+                                        OR (O.type = ''P'' AND O.is_ms_shipped = 0 AND LEFT(O.name COLLATE SQL_Latin1_General_CP1_CI_AS, 3) <> ''usp'')
+			                            OR (O.type IN (''FN'',''TF'') AND LEFT(O.name COLLATE SQL_Latin1_General_CP1_CI_AS, 2) <> ''fn'')
+		                            )
+                            OPTION (RECOMPILE);';
+                        
+			            EXEC sys.sp_executesql @stmt = @StringToExecute;
+			            IF @Debug = 2 AND @StringToExecute IS NOT NULL PRINT @StringToExecute;
+                    END		
+                END;
+                /* End Greystone object name checks */
+
+
+
 		        /**********************************************************************************************************************/
 		        SELECT
 			        @CheckId       = 5
@@ -925,6 +1055,12 @@ AS
 		           ,@Finding       = 'Including Special Characters in Name'
 		           ,@URLAnchor     = 'naming-conventions#5';
 		        /**********************************************************************************************************************/
+                /*
+                Greystone Generation 1
+                Allow underscore in name
+
+                */
+
 		        IF NOT EXISTS (SELECT 1 FROM #SkipCheck AS SC WHERE SC.CheckId = @CheckId AND SC.ObjectName IS NULL)
 		        BEGIN
 			        IF @Debug IN (1, 2) RAISERROR(N'Running CheckId [%d]', 0, 1, @CheckId) WITH NOWAIT;
@@ -953,7 +1089,7 @@ AS
 					        O.type_desc NOT IN (''DEFAULT_CONSTRAINT'', ''FOREIGN_KEY_CONSTRAINT'', ''PRIMARY_KEY_CONSTRAINT'', ''INTERNAL_TABLE'', ''CHECK_CONSTRAINT'', ''UNIQUE_CONSTRAINT'', ''SQL_INLINE_TABLE_VALUED_FUNCTION'', ''TYPE_TABLE'', ''SEQUENCE_OBJECT'')
 					        AND O.name NOT IN (''__RefactorLog'', ''__MigrationLog'', ''__MigrationLogCurrent'', ''__SchemaSnapshot'', ''__SchemaSnapshotDateDefault'', ''fn_diagramobjects'', ''sp_alterdiagram'', ''sp_creatediagram'', ''sp_dropdiagram'', ''sp_helpdiagramdefinition'', ''sp_helpdiagrams'', ''sp_renamediagram'', ''sp_upgraddiagrams'', ''database_firewall_rules'', ''sp_Develop'', ''sp_WhoIsActive'', ''__EFMigrationsHistory'')
 					        AND (
-						        O.name LIKE ''%[^A-Z0-9@$#]%'' COLLATE Latin1_General_CI_AI /* contains illegal characters */
+						        O.name LIKE ''%[^A-Z0-9@__#]%'' COLLATE Latin1_General_CI_AI /* contains illegal characters */
 						        OR O.name NOT LIKE ''[A-Z]%'' COLLATE Latin1_General_CI_AI /* doesn''t start with a character */
 						        )
                         OPTION (RECOMPILE);';
@@ -1357,6 +1493,7 @@ AS
                             INNER JOIN ' + QUOTENAME(@DatabaseName) + N'.sys.columns AS C ON T.object_id = C.object_id
                         WHERE
                             T.type          = ''U''
+                            AND T.is_ms_shipped = 0
                         AND T.temporal_type <> 1
                         AND C.name LIKE ''%id''
                         AND NOT EXISTS (
@@ -1470,7 +1607,8 @@ AS
 					        INNER JOIN ' + QUOTENAME(@DatabaseName) + N'.sys.schemas AS S ON T.schema_id = S.schema_id
 				        WHERE
 					        T.type = ''U''
-					    AND I.type <> 0
+                            AND T.is_ms_shipped = 0
+					        AND I.type <> 0
                         GROUP BY
                             S.schema_id
                            ,S.name
@@ -1519,6 +1657,7 @@ AS
 					        INNER JOIN ' + QUOTENAME(@DatabaseName) + N'.sys.schemas AS S ON T.schema_id = S.schema_id
 				        WHERE
 					        T.type        = ''U''
+                            AND T.is_ms_shipped = 0
 					    AND I.is_disabled = 1
                         OPTION (RECOMPILE);';
 
@@ -1829,6 +1968,7 @@ AS
 		           ,@URLAnchor     = 'naming-conventions#7';
 		        /**********************************************************************************************************************/
 		        IF NOT EXISTS (SELECT 1 FROM #SkipCheck AS SC WHERE SC.CheckId = @CheckId AND SC.ObjectName IS NULL)
+                AND @GenerationLevel <> 'GEN1'
 		        BEGIN
 			        IF @Debug IN (1, 2) RAISERROR(N'Running CheckId [%d]', 0, 1, @CheckId) WITH NOWAIT;
 			
@@ -1857,6 +1997,7 @@ AS
 					        INNER JOIN ' + QUOTENAME(@DatabaseName) + N'.sys.schemas       AS S  ON T.schema_id  = S.schema_id
 				        WHERE
 					        I.is_primary_key  = 1
+                            AND T.is_ms_shipped = 0
 					        AND C.name COLLATE SQL_Latin1_General_CP1_CI_AS = ''id''
                         OPTION (RECOMPILE);';
 
@@ -2208,7 +2349,8 @@ AS
 					        LEFT OUTER JOIN ' + QUOTENAME(@DatabaseName) + N'.sys.tables AS T ON O.parent_object_id = T.object_id
 					        INNER JOIN ' + QUOTENAME(@DatabaseName) + N'.sys.schemas AS S ON O.schema_id            = S.schema_id
 				        WHERE
-					        SM.definition LIKE ''%SELECT%*%'' COLLATE SQL_Latin1_General_CP1_CI_AS
+                            O.is_ms_shipped = 0
+					        AND SM.definition LIKE ''%SELECT%*%'' COLLATE SQL_Latin1_General_CP1_CI_AS
 					        AND SM.definition NOT LIKE ''%IF%EXISTS%(%SELECT%*%'' COLLATE SQL_Latin1_General_CP1_CI_AS
 					        AND SM.definition NOT LIKE ''%COUNT%(%*%)%'' COLLATE SQL_Latin1_General_CP1_CI_AS
 					        AND SM.definition NOT LIKE ''%SELECT%=%*%'' COLLATE SQL_Latin1_General_CP1_CI_AS
@@ -2327,6 +2469,7 @@ AS
 					        INNER JOIN ' + QUOTENAME(@DatabaseName) + N'.sys.schemas AS S ON O.schema_id = S.schema_id
 				        WHERE
 					        O.type IN (''P'')
+                            AND O.is_ms_shipped = 0
                             AND O.name NOT IN (''sp_alterdiagram'', ''sp_creatediagram'', ''sp_dropdiagram'', ''sp_helpdiagramdefinition'', ''sp_helpdiagrams'', ''sp_renamediagram'', ''sp_upgraddiagrams'', ''fn_diagramobjects'', ''sp_Develop'', ''sp_WhoIsActive'')
 					        AND (SM.definition NOT LIKE ''%SET NOCOUNT ON%'' COLLATE SQL_Latin1_General_CP1_CI_AS
                             AND SM.definition NOT LIKE ''%SET NOCOUNT, XACT_ABORT ON%'' COLLATE SQL_Latin1_General_CP1_CI_AS)
