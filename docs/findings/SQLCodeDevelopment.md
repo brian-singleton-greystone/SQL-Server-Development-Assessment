@@ -37,7 +37,17 @@ Most importantly, you work from a single source of truth, greatly reducing the r
 
 Your choices are [Redgate SQL Source Control](https://www.red-gate.com/products/sql-development/sql-source-control/) or a SSDT ([SQL Server Data Tools](https://docs.microsoft.com/en-us/sql/ssdt/download-sql-server-data-tools-ssdt)) database project backed by DevOps or Github depending on the client requirments.
 
-The database project source control should be kept separate from application code. Database and reporting team members might/should not need access to the app source code. The data and business intelligence development team might have their own changes (performance tuning, data warehouse, reporting) in a "dev" branch, but their version is not ready for production yet.
+It is recommended that the database project source control be kept separate from application code. Database and reporting team members might/should not need access to the app source code. The data and business intelligence development team might have their own changes (performance tuning, data warehouse, reporting) in a "dev" branch, but their version is not ready for production yet.
+
+**Reasons to use a [monorepo](https://en.wikipedia.org/wiki/Monorepo) for multiple projects**
+- All the projects have the same permissions and access needs
+- All the projects are fully aligned in terms of versioning
+- All the projects must always be deployed together by the CI/CD pipeline(s)
+- All the projects cannot be built separately unless they are in the same solution
+
+If you choose to use a [monorepo](https://en.wikipedia.org/wiki/Monorepo), please ensure you have accounted for the issues that can occur if not all the bullet points are fully true.
+
+- See [Should the Database and Application projects be in the same Repository?](https://eitanblumin.com/2022/07/05/should-the-database-and-application-projects-be-in-the-same-repository) article by Eitan Blumin.
 
 [Back to top](#top)
 
@@ -256,7 +266,10 @@ ELSE
     END;
 ```
 
-**Do not use this UPSERT pattern:** It will produce primary key violations when run concurrently. MERGE can be used for ETL processing if it is assured to NOT be run concurrently.
+**This UPSERT pattern can be problematic:** In general, do not use MERGE statements in transactional (OLTP) databases, even though they are valid in ETL processes. If you do encounter MERGE statements in OLTP databases, be sure to address potential concurrency issues as described below. MERGE can be used for ETL processing if it is assured to NOT be run concurrently.
+
+- See [What To Avoid If You Want To Use MERGE](https://michaeljswart.com/2021/08/what-to-avoid-if-you-want-to-use-merge/#:~:text=So%20just%20to,MERGE) article by Michael J. Swart
+- See [Use Caution with SQL Server's MERGE Statement](https://www.mssqltips.com/sqlservertip/3074/use-caution-with-sql-servers-merge-statement/#:~:text=function%20as%20expected.-,Conclusion,-I%20am%20not) article by Aaron Bertrand
 
 ```sql
 MERGE INTO dbo.Person WITH (HOLDLOCK) AS T
@@ -445,7 +458,7 @@ WHILE EXISTS (SELECT * FROM #Person WHERE IsProcessedFlag = 0)
         WHERE
             P.IsProcessedFlag = 0
         ORDER BY
-            P.PersonId;
+            P.PersonId ASC;
 
         UPDATE
             dbo.Person
@@ -470,18 +483,24 @@ WHILE EXISTS (SELECT * FROM #Person WHERE IsProcessedFlag = 0)
 
 Use Temporary Tables and not Table Variables.
 
-- There is optimization limitation like lack of statistics that very frequently lead to performance issues. The advice of "use table variables if you have less than NNN rows" is flawed. It might seem like temporary tables are performant, but they are not scalable with a couple more years of data.
+- There is optimization limitations like lack of statistics that very frequently lead to performance issues. The advice of "use table variables if you have less than NNN rows" is flawed. It might seem like temporary tables are performant, but they are not scalable with a couple more years of data.
 - There are two use cases for table variable and are infrequently called for.
   1. Extremely highly called code where recompiles from temporary table activity is a problem
   2. Audit scenarios when you need to keep data after a transaction is rolled back.
 
-```sql
+**Do This:**
+
+``` sql
 CREATE TABLE #UseMe (
     UseMeId   int           NOT NULL IDENTITY(1, 1) PRIMARY KEY
    ,FirstName nvarchar(100) NOT NULL
    ,LastName  nvarchar(100) NOT NULL
 );
+```
 
+**Instead Of:**
+
+``` sql
 DECLARE @DoNotUseMe table (
     DoNotUseMeId int           NOT NULL IDENTITY(1, 1) PRIMARY KEY
    ,FirstName    nvarchar(100) NOT NULL
@@ -601,7 +620,7 @@ aka. Catch-All Query or Kitchen Sink Query
 
 If your stored procedure has multiple parameters where any one (or more) number are parameters are optional, you have a dynamic search query.
 
-If your query is moderately complex you should use `OPTION (RECOMPILE)`. If you query is complex you should build the query with dynamic SQL.
+If your query is moderately complex you should use `OPTION (RECOMPILE)`. If your query is complex, you should build the query with dynamic SQL.
 
 You will also know this based on the `WHERE` clause of the query. You will see `@ProductId IS NULL` or have parameters wrapped in an `ISNULL()`.
 
@@ -919,7 +938,7 @@ See:
 
 Although the semicolon isn't required for most statements prior to SQL Server 2016, it will be required in a future version. If you do not include them now database migration in the future will need to add them. Terminating semicolon are required by the ANSI SQL Standard.
 
-Continued use of deprecated features will cause database migrations fail. An example is ```RAISERROR``` in the format ```RAISERROR 15600 'MyCreateCustomer';```  is discontinued. ```RAISERROR (15600, -1, -1, 'MyCreateCustomer');``` is the current syntax. A database will not migrate to a newer SQL Server version without refactoring the TSQL code.
+Continued use of deprecated features will cause database migrations to fail. An example is ```RAISERROR``` in the format ```RAISERROR 15600 'MyCreateCustomer';```  is discontinued. ```RAISERROR (15600, -1, -1, 'MyCreateCustomer');``` is the current syntax. A database will not migrate to a newer SQL Server version without refactoring the TSQL code.
 
 For new development work, do not use deprecated features. For existing aplications, plan to modify applications that currently use these features as soon as possible. [See Microsoft Docs](https://docs.microsoft.com/en-us/sql/database-engine/deprecated-database-engine-features-in-sql-server-version-15?view=sql-server-ver15#:~:text=For%20new%20development%20work%2C%20do%20not%20use%20deprecated%20features.%20For%20existing%20aplications%2C%20plan%20to%20modify%20applications%20that%20currently%20use%20these%20features%20as%20soon%20as%20possible.).
 
@@ -960,12 +979,10 @@ END CATCH; /* <-- semicolon goes at the end here */
 
 ---
 
-<a name="100"/>
-
 ## Using a Non-SARGable Expression in a WHERE Clause
 **Check Id:** 100 [Not implemented yet. Click here to add the issue if you want to develop and create a pull request.](https://github.com/EmergentSoftware/SQL-Server-Development-Assessment/issues/new?assignees=&labels=enhancement&template=feature_request.md&title=Using+a+Non-SARGable+Expression+in+a+WHERE+Clause)
 
-Search ARGument..able. Avoid having a column or variable used within an expression or used as a function parameter. Columns are best used its self on one side of the operator. You will get a table scan instead of a index seek which will hurt performance.
+Search ARGument..able. Avoid having a column or variable used within an expression or used as a function parameter. You will get a table scan instead of an index seek which will hurt performance.
 
 ![Non-SARGable Scan vs. SARGable Seek](../Images/Using_a_Non-SARGable_Expression_in_a_WHERE_Clause.png)
 
@@ -974,7 +991,7 @@ Another issue with non-sargable queries besides the forced table scan is SQL Ser
 
 - See [Using Missing Indexes Recommendations](/SQL-Server-Development-Assessment/best-practices-and-potential-findings/sql-code-conventions#using-missing-indexes-recommendations)
 
-By changed the WHERE clause to not use the YEAR() function and doing a bit more typing allows SQL Server to understand what you want it to do.
+Changing the WHERE clause to not use the YEAR() function and doing a bit more typing allows SQL Server to understand what you want it to do.
 
 ![Non-SARGable Does Not Get Index Recommendation](../Images/Non-SARGable_Does_Not_Get_Index_Recommendation.png)
 
@@ -1573,7 +1590,7 @@ This error catching and trowing methodology is the newest. [```THROW```](https:/
 ### Return Code Methodology (dbo.TestReturnCode)
 The return code methodology utilizes [```RETURN```](https://docs.microsoft.com/en-us/sql/t-sql/language-elements/return-transact-sql). ```RETURN```, exits unconditionally from a query or procedure. ```RETURN``` is immediate and complete and can be used at any point to exit from a procedure, batch, or statement block. Statements that follow RETURN are not executed.
 
-When ```THROW``` is utilized, a return code is not assigned. ```RETURN``` was commonly utilized with [```RAISERROR```](https://docs.microsoft.com/en-us/sql/t-sql/language-elements/raiserror-transact-sql) which never aborts execution, so ```RETURN``` could be used afterwards. (See [Using RAISERROR Instead of THROW](/SQL-Server-Development-Assessment/best-practices-and-potential-findings/sql-code-conventions#using-raiserror-instead-of-throw)). Utilizing ```RAISERROR``` with the return code would provide context to the error that occured to present to the user and log the error.
+When ```THROW``` is utilized, a return code is not assigned. ```RETURN``` was commonly utilized with [```RAISERROR```](https://docs.microsoft.com/en-us/sql/t-sql/language-elements/raiserror-transact-sql) which never aborts execution, so ```RETURN``` could be used afterwards. (See [Using RAISERROR Instead of THROW](/SQL-Server-Development-Assessment/best-practices-and-potential-findings/sql-code-conventions#using-raiserror-instead-of-throw)). Utilizing ```RAISERROR``` with the return code would provide context to the error that occurred to present to the user and log the error.
 
 ### Output Parameter Methodology (dbo.TestReturnCodeParameter)
 This methodology utilizes stored procedure ```OUTPUT``` parameters. Here you can set a return code and a return message that is passed back to the software code to present to the user and log the error
@@ -2193,7 +2210,7 @@ SELECT
 FROM
     dbo.Person AS P
 ORDER BY
-    P.LastName;
+    P.LastName ASC;
 ```
 
 [Back to top](#top)
@@ -2264,12 +2281,12 @@ WHERE
     FirstName = 'Kevin' -- This line is a comment
     AND LastName = 'Martin'
 ORDER BY
-    LastName;
+    LastName ASC;
 ```
 
 It turns into this in monitoring tools and Dynamic Management Views:
 ```sql
-SELECT * FROM dbo.Person WHERE FirstName = 'Kevin' -- This line is a comment AND LastName = 'Martin' ORDER BY LastName;
+SELECT * FROM dbo.Person WHERE FirstName = 'Kevin' -- This line is a comment AND LastName = 'Martin' ORDER BY LastName ASC;
 ```
 
 You cannot tell where the query ends and it will break tools like Redgate SQL Prompt.
@@ -2573,9 +2590,14 @@ A view can be helpful with the use cases below and should be no less performant,
 - **View Use Cases**
   - Create a temporary indexed view for performance issues you cannot solve without changing T-SQL code
   - You need to retire a table and use a new table with similar data (still should be a temporary use)
-  - For security reasons to expose only a specific data to a database role
+  - For security reasons to expose only specific data to a database role
   - As an interface layer for a client that does not support a table or stored procedure data source
   - Abstracting complicated base tables
+  - Data aggregation like `SUM()`, `AVG()`, `COUNT()`, `MIN()`, `MAX()`, ...
+    - It is best to include this aggregation code in a stored procedure, but if there is a need to not have duplicated business logic code in multiple stored procedures, these data aggregation views can be helpful.
+      - If a view does not work and you need parameters, try an Inline Table Valued Function (iTVF). Views and iTVF at runtime are both inlined and treaded similarly to derived tables or CTEs.
+    - These aggregation views can be used to `JOIN` on with single row data like an Event. The aggregations would be used to sum up the Attendees joined on the EventId.
+    - Immutable (unchanging) records can have the parent table's column value set inside a transaction with the child rows.
 
 [Back to top](#top)
 

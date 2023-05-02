@@ -34,6 +34,8 @@ Use the [Table Per Type (TPT)](https://entityframework.net/tpt) table design pat
 
 The [Table Per Concrete (TPC)](https://entityframework.net/tpc) design is not good as it would have redundant data and no relationship between the sub tables. The redundant data would just be in multiple tables vs squished into one table with [Table Per Hierarchy (TPH)](https://entityframework.net/tph). TPC would help with the extra nullable columns compared to TPH.
 
+The [Table Per Type (TPT)](https://entityframework.net/tpt) table design pattern is performant with proper indexes well into the 100s of millions of rows and beyond. With proper indexes a query can join multiple tables and still execute in less than a second even for costly queries that scan indexes like exporting of data. Seeking on indexes for row-level queries like finding a specific CustomerId, should only take on order of 10s of milliseconds. Until multiple of billions of rows are a consideration there is no performance reason not to follow database norm form best practices. If you have slow joined table queries, you're probably not using your database correctly.
+
 TPC & TPH do not follow normal form. 
 
 - See [Not Normalizing Tables](#not-normalizing-tables).
@@ -167,7 +169,13 @@ With a 'Phone Number' table you would not use a linking table. The 'Phone Number
 |2|1|2|(612) 233-2255|
 |3|2|3|1+ (453) 556-9902|
 
-A use case exception for using the proper weak or strong type is for security purposes. You might encounter a requirement for security that utilizing a linking table makes it impossible to have a discriminator to prevent read or modifications to a row.
+An entity is a table and is a single set of attributes. There is a need sometimes for entity/table inheritance when you might have a parent entity/table named `Person`, you would need another inherited entity/table for `Employee`. The `Employee` entity/table will store attributes (Salary, Job Title, ...) that are not attributes in the `Person` entity/table.
+
+
+Table Entity Use Case Exception
+A use case exception for using proper table entities is for security purposes. You might encounter a requirement for security that utilizing a linking table makes it impossible to have a discriminator like `PhoneTypeId` to prevent read or modifications to a row based on how the software was/is written.
+
+This exception use can lead to table schema development issues for cases when you have a multiple entity/tables like `dbo.BuyerPhone`, `dbo.SellerPhone`, `dbo.ServicerPhone`, `dbo.VendorPhone`. With the address entity not being materialized in one `dbo.Phone` entity/table, the table schemas need to be kept in sync which might not occur. Ask me how I know. ;-(
 
 
 [Back to top](#top)
@@ -214,6 +222,24 @@ In most cases, columns with the name ????Id that are not the primary key should 
 You will not get JOIN Eliminations without a foreign key and a column that allows NULLs.
 
 - See [Nullable Columns and JOIN Elimination](#nullable-columns-and-join-elimination) 
+
+[Back to top](#top)
+
+---
+
+<a name="157"/>
+
+## Using Table Partitions
+**Check Id:** 157
+
+Database table partitions should not be used to "speed up" query performance. Use an index instead.
+
+Partitioning can make your workload run slower if the partitions are not set up correctly and your queries cannot remain within a single partition. Instead of thinking about a partition, think about an index.
+
+Partitioning can be used as a maintenance tool for either distributing data between cold or hot storage. 
+
+Partition switching/swapping/truncating is another use case for managing large amounts of table data like in a data warehouse.
+
 
 [Back to top](#top)
 
@@ -422,7 +448,7 @@ The `CHECK CHECK` syntax is correct. The 1st `CHECK` is the end of `WITH CHECK` 
 
 To find untrusted foreign keys and check constraints in your database run the script below to identify and create an ``ALTER`` statement to correct the issue. In Redgate SQL Prompt the snippet code is ``fk``. If you receive an error with the generated ``ALTER`` statement it means past constraint violations have been being suppressed by ``WITH NOCHECK``. You will have to figure out how to fix the rows that do not comply with the constraint.
 
-```
+```sql
 SELECT
     SchemaName = S.name
    ,TableName  = T.name
@@ -458,9 +484,9 @@ WHERE
 AND CC.is_not_for_replication = 0
 AND CC.is_disabled            = 0
 ORDER BY
-    SchemaName
-   ,TableName
-   ,ObjectName;
+    SchemaName ASC
+   ,TableName ASC
+   ,ObjectName ASC;
 ```
 
 [Back to top](#top)
@@ -517,7 +543,9 @@ These are a 400 level tasks and please feel free to reach out to a DBA for assis
 ## Missing Index for Foreign Key
 **Check Id:** 21
 
-Each foreign key in your table should be included in an index. Start off with an index on just the foreign key column if you have no workload to tune a multi-column index. There is a real good chance the indexes will be used when queries join on the parent table.
+Each foreign key in your table should be included in an index in the primary key position. If you have a `UNIQUE NONCLUSTERED` index with multiple keys, ensure foreign key columns not in the primary key location also get their own `NONCLUSTERED` index in the primary key position.
+
+Start off with an index on just the foreign key column if you have no workload to tune a multi-column index. There is a real good chance the indexes will be used when queries join on the parent table.
 
 [Back to top](#top)
 
@@ -593,10 +621,19 @@ Heaps have performance issues like table scans, forward fetches.
 
 These normalizing principles are used to reduce data duplication, avoid data anomalies, ensure table relationship integrity, and make data management simplified.
 
-You should always normalize the database schema unless you have a really good reason not to. Denormalizing has been performed in the past with the saying "Normalize until it hurts, denormalize until it works". Denormalization almost always leads to eventual issues. Denormalization complicates updates, deletes & inserts making the database difficult to modify. We have tools like indexed or materialized views and covering indexes to remediate performance issues. There are query rewriting techniques that can make queries more performant. 
-
 A normalize table design like addresses and phone numbers in separate tables allows for extensibility when the requirements today might only call for a single phone number or address. You can utilize a ``UNIQUE`` constraint/index to ensure only a single row can exist but allows for flexibility in the future. You will already have the Phone table so you will not have to create a new table and migrate the data and drop the ``UNIQUE`` constraint/index.
 
+You should always normalize the database schema unless you have a really good reason not to. Denormalizing has been performed in the past with the saying "Normalize until it hurts, denormalize until it works". Denormalization almost always leads to eventual issues. Denormalization complicates updates, deletes & inserts making the database difficult to modify. We have tools like indexes or materialized views and covering indexes to remediate performance issues. There are query rewriting techniques that can make queries more performant. 
+
+A legally binding entity like a contract that will be created as an immutable snapshot can contain redundant data. This helps with possible future reprinting of documents. Consider using an auditable append-only Ledger table.
+
+If data is denormalized there are methods of keeping denormalized or duplicated data values correct. The data should be strongly consistency instead of eventually consistent.
+
+Strongly consistent is with the use of transactions that will not allow the data to be out-of-sync like in stored procedure, triggers are the next best option, but triggers have performance issues.
+
+Eventually consistent methods are something like jobs that run at a predetermined or event-based time to sync the denormalized (duplicate) data. Eventually consistent leaves a gap of time, even if for milliseconds, that could cause data consistency issues.
+
+- See [Keeping Denormalized Values Correct](http://database-programmer.blogspot.com/2008/11/keeping-denormalized-values-correct.html) article by Kenneth Downs
 
 [Back to top](#top)
 
@@ -633,8 +670,8 @@ WHERE
 AND I.type             <> 5 /* CLUSTERED */
 AND P.data_compression <> 2 /* Not Page compressed, which is the default for system-versioned temporal tables */
 ORDER BY
-    S.name
-   ,T.name;
+    S.name ASC
+   ,T.name ASC;
 ```
 
 [Back to top](#top)
