@@ -150,21 +150,30 @@ Consider using [sp_CRUDGen](https://github.com/kevinmartintech/sp_CRUDGen) to ge
 ```sql
 SET NOCOUNT, XACT_ABORT ON;
 
-BEGIN TRANSACTION;
+BEGIN TRY
+    BEGIN TRANSACTION;
 
-UPDATE
-    dbo.Person WITH (UPDLOCK, SERIALIZABLE)
-SET
-    FirstName = 'Kevin'
-WHERE
-    LastName = 'Martin';
+    UPDATE
+        dbo.Person WITH (UPDLOCK, SERIALIZABLE)
+    SET
+        FirstName = 'Kevin'
+    WHERE LastName = 'Martin';
 
-IF @@ROWCOUNT = 0
+    IF @@ROWCOUNT = 0
     BEGIN
         INSERT dbo.Person (FirstName, LastName) VALUES ('Kevin', 'Martin');
     END;
 
-COMMIT TRANSACTION;
+    COMMIT TRANSACTION;
+END TRY
+BEGIN CATCH
+    IF @@TRANCOUNT > 0
+    BEGIN
+        ROLLBACK TRANSACTION;
+    END;
+
+    THROW;
+END CATCH;
 ```
 
 **Use this UPSERT pattern when a record insert is more likely:** Don't worry about checking for a records existence just perform the insert.
@@ -172,28 +181,40 @@ COMMIT TRANSACTION;
 ```sql
 SET NOCOUNT, XACT_ABORT ON;
 
-BEGIN TRANSACTION;
+BEGIN TRY
+    BEGIN TRANSACTION;
 
-INSERT dbo.Person (FirstName, LastName)
-SELECT
-    'Kevin'
-   ,'Martin'
-WHERE
-    NOT EXISTS (
+    INSERT dbo.Person
+    (
+        FirstName,
+        LastName
+    )
     SELECT
-        1
-    FROM
-        dbo.Person WITH (UPDLOCK, SERIALIZABLE)
-    WHERE
-        LastName = 'Martin'
-);
+        'Kevin',
+        'Martin'
+    WHERE NOT EXISTS
+    (
+        SELECT
+            1
+        FROM dbo.Person WITH (UPDLOCK, SERIALIZABLE)
+        WHERE LastName = 'Martin'
+    );
 
-IF @@ROWCOUNT = 0
+    IF @@ROWCOUNT = 0
     BEGIN
         UPDATE dbo.Person SET FirstName = 'Kevin' WHERE LastName = 'Martin';
     END;
 
-COMMIT TRANSACTION;
+    COMMIT TRANSACTION;
+END TRY
+BEGIN CATCH
+    IF @@TRANCOUNT > 0
+    BEGIN
+        ROLLBACK TRANSACTION;
+    END;
+
+    THROW;
+END CATCH;
 ```
 
 **Use this UPSERT pattern to allow the client application to handle the exception:** Ensure you handle the exception in your code.
@@ -220,34 +241,77 @@ For JSON, XML or comma-separated list ensure you insert the records into a tempo
 ```sql
 SET NOCOUNT, XACT_ABORT ON;
 
-BEGIN TRANSACTION;
+BEGIN TRY
+    BEGIN TRANSACTION;
 
-CREATE TABLE #Update (FirstName varchar(50) NOT NULL, LastName varchar(50) NOT NULL);
+    /***************************************************************
+    ** Create temp table to store the updates
+    ****************************************************************/
+    CREATE TABLE #Update
+    (
+        FirstName varchar(50) NOT NULL,
+        LastName varchar(50) NOT NULL
+    );
 
-INSERT INTO #Update (FirstName, LastName)
-VALUES
-     ('Kevin', 'Martin')
-   , ('Jean-Luc', 'Picard');
+    INSERT INTO #Update
+    (
+        FirstName,
+        LastName
+    )
+    VALUES 
+        ('Kevin', 'Martin'),
+        ('Jean-Luc', 'Picard');
 
-UPDATE
-    P WITH (UPDLOCK, SERIALIZABLE)
-SET
-    P.FirstName = U.FirstName
-FROM
-    dbo.Person         AS P
+
+    /***************************************************************
+    ** Perform Updates (WHEN MATCHED)
+    ****************************************************************/
+    UPDATE
+        P WITH (UPDLOCK, SERIALIZABLE)
+    SET
+        P.FirstName = U.FirstName
+    FROM dbo.Person AS P
     INNER JOIN #Update AS U
         ON P.LastName = U.LastName;
 
-INSERT dbo.Person (FirstName, LastName)
-SELECT
-    U.FirstName
-   ,U.LastName
-FROM
-    #Update AS U
-WHERE
-    NOT EXISTS (SELECT * FROM dbo.Person AS P WHERE P.LastName = U.LastName);
 
-COMMIT TRANSACTION;
+    /***************************************************************
+    ** Perform Inserts (WHEN NOT MATCHED [BY TARGET])
+    ****************************************************************/
+    INSERT dbo.Person
+    (
+        FirstName,
+        LastName
+    )
+    SELECT
+        U.FirstName,
+        U.LastName
+    FROM #Update AS U
+    WHERE NOT EXISTS
+    (
+        SELECT * FROM dbo.Person AS P WHERE P.LastName = U.LastName
+    );
+
+
+    /***************************************************************
+    ** Perform Deletes (WHEN NOT MATCHED BY SOURCE)
+    ****************************************************************/
+    DELETE P
+    FROM dbo.Person AS P
+    LEFT OUTER JOIN #Update AS U
+        ON P.LastName = U.LastName
+    WHERE U.LastName IS NULL;
+
+    COMMIT TRANSACTION;
+END TRY
+BEGIN CATCH
+    IF @@TRANCOUNT > 0
+    BEGIN
+        ROLLBACK TRANSACTION;
+    END;
+
+    THROW;
+END CATCH;
 ```
 
 **Do not use this UPSERT pattern:** It will produce primary key violations when run concurrently.
@@ -304,19 +368,28 @@ WHEN NOT MATCHED BY SOURCE THEN
 This method will not prevent a race condition and the last update will win.
 
 ```sql
-SET NOCOUNT, XACT_ABORT ON;
-BEGIN TRANSACTION;
+BEGIN TRY
+    BEGIN TRANSACTION;
 
-IF EXISTS (SELECT * FROM dbo.Person WITH (UPDLOCK, SERIALIZABLE) WHERE PersonId = @PersonId)
+    IF EXISTS (SELECT * FROM dbo.Person WITH (UPDLOCK, SERIALIZABLE) WHERE PersonId = @PersonId)
+        BEGIN
+            UPDATE dbo.Person SET FirstName = @FirstName WHERE PersonId = @PersonId;
+        END;
+    ELSE
+        BEGIN
+            INSERT dbo.Person (PersonId, FirstName) VALUES (@PersonId, @FirstName);
+        END;
+
+    COMMIT TRANSACTION;
+END TRY
+BEGIN CATCH
+    IF @@TRANCOUNT > 0
     BEGIN
-        UPDATE dbo.Person SET FirstName = @FirstName WHERE PersonId = @PersonId;
-    END;
-ELSE
-    BEGIN
-        INSERT dbo.Person (PersonId, FirstName) VALUES (@PersonId, @FirstName);
+        ROLLBACK TRANSACTION;
     END;
 
-COMMIT TRANSACTION;
+    THROW;
+END CATCH;
 ```
 
 [Back to top](#top)
@@ -434,11 +507,11 @@ CREATE TABLE #Person (
     PersonId        int           NOT NULL IDENTITY(1, 1) PRIMARY KEY
    ,FirstName       nvarchar(100) NOT NULL
    ,LastName        nvarchar(128) NOT NULL
-   ,IsProcessedFlag bit           NOT NULL DEFAULT (0)
+   ,IsProcessed     bit           NOT NULL DEFAULT (0)
 );
 
 INSERT INTO
-    #Person (FirstName, LastName, IsProcessedFlag)
+    #Person (FirstName, LastName, IsProcessed)
 VALUES
      (N'Joel', N'Miller', 0);
 
@@ -447,7 +520,7 @@ DECLARE
    ,@FirstName nvarchar(100)
    ,@LastName  nvarchar(100);
 
-WHILE EXISTS (SELECT * FROM #Person WHERE IsProcessedFlag = 0)
+WHILE EXISTS (SELECT * FROM #Person WHERE IsProcessed = 0)
     BEGIN
         SELECT TOP (1)
                @PersonId  = P.PersonId
@@ -456,7 +529,7 @@ WHILE EXISTS (SELECT * FROM #Person WHERE IsProcessedFlag = 0)
         FROM
             #Person AS P
         WHERE
-            P.IsProcessedFlag = 0
+            P.IsProcessed = 0
         ORDER BY
             P.PersonId ASC;
 
@@ -468,7 +541,7 @@ WHILE EXISTS (SELECT * FROM #Person WHERE IsProcessedFlag = 0)
         WHERE
             PersonId = @PersonId;
 
-        UPDATE #Person SET IsProcessedFlag = 1 WHERE PersonId = @PersonId;
+        UPDATE #Person SET IsProcessed = 1 WHERE PersonId = @PersonId;
     END;
 ```
 
@@ -1291,6 +1364,8 @@ So, while DISTINCT and GROUP BY are identical in a lot of scenarios, there is on
 
 You also might be using SELECT DISTINCT to mask a JOIN problem. It’s much better to determine why rows are being duplicated and fix the problem.
 
+- See: [Performance Surprises and Assumptions : GROUP BY vs. DISTINCT](https://sqlperformance.com/2017/01/t-sql-queries/surprises-assumptions-group-by-distinct) by Aaron Bertrand
+
 [Back to top](#top)
 
 ---
@@ -1465,6 +1540,8 @@ If you are performing a funds transfer and updating multiple bank account tables
 
 ```sql
 SET NOCOUNT, XACT_ABORT ON;
+
+/* Exclude SQL code that does not need to be inclued in the transaction. Keep transactions shrt. */
 
 BEGIN TRY
     BEGIN TRANSACTION;
@@ -1937,6 +2014,8 @@ WHERE
 **Interpreted execution:** UDFs are evaluated as a batch of statements, executed statement-by-statement. Each statement itself is compiled, and the compiled plan is cached. Although this caching strategy saves some time as it avoids recompilations, each statement executes in isolation. No cross-statement optimizations are carried out.
 
 **Serial execution:** SQL Server does not allow intra-query parallelism in queries that invoke UDFs.
+
+- See: [Refactor SQL Server scalar UDF to inline TVF to improve performance](https://www.mssqltips.com/sqlservertip/4772/refactor-sql-server-scalar-udf-to-inline-tvf-to-improve-performance/)
 
 [Back to top](#top)
 
@@ -2611,6 +2690,39 @@ A view can be helpful with the use cases below and should be no less performant,
 This check found objects that were deleted, renamed. Use can also run "Find Invalid Objects" with RedGate SQL Prompt in SQL Server Management Studio.
 
 Try running EXEC sp_refreshsqlmodule or sp_refreshview.
+
+[Back to top](#top)
+
+---
+
+<a name="159"/>
+
+## JSON Explicit Schema
+**Check Id:** 159 [Not implemented yet. Click here to add the issue if you want to develop and create a pull request.](https://github.com/EmergentSoftware/SQL-Server-Development-Assessment/issues/new?assignees=&labels=enhancement&template=feature_request.md&title=JSON+Explicit+Schema)
+
+Explicitly defining the schema JSON columns using [with_clause](https://learn.microsoft.com/en-us/sql/t-sql/functions/openjson-transact-sql?view=sql-server-ver16#with_clause) is more performant.
+
+If you are required to use JSON string in the relational database and need to frequent parse the JSON string, you could create a computed column using `JSON_VALUE(expression, path)` and create an index
+
+- See: [JSON_VALUE (Transact-SQL)](https://learn.microsoft.com/en-us/sql/t-sql/functions/json-value-transact-sql?view=sql-server-ver16)
+
+[Back to top](#top)
+
+---
+<a name="160"/>
+
+## JSON Performance
+**Check Id:** 160 [Not implemented yet. Click here to add the issue if you want to develop and create a pull request.](https://github.com/EmergentSoftware/SQL-Server-Development-Assessment/issues/new?assignees=&labels=enhancement&template=feature_request.md&title=JSON+Performance)
+
+If you are required to use JSON strings in the relational database and need to frequent parse the JSON string, create a computed column on the table using `JSON_VALUE(expression, path)` and create an index.
+
+```sql
+ALTER TABLE dbo.DeliveryInventory ADD MakeName AS JSON_VALUE(JSONAttributes, '$.Make');
+CREATE NONCLUSTERED INDEX DealerInventory_MakeName ON dbo.DeliveryInventory (MakeName ASC);
+```
+
+
+- See: [JSON_VALUE (Transact-SQL)](https://learn.microsoft.com/en-us/sql/t-sql/functions/json-value-transact-sql?view=sql-server-ver16)
 
 [Back to top](#top)
 
