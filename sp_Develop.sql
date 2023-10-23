@@ -828,7 +828,7 @@ AS
 		        /**********************************************************************************************************************/
                 /*
                 Greystone Generation 1
-                Removed hits on prefixes vw, usp, PK, IX.
+                Removed hits on prefixes vw, usp, PK, IX, tbl
 
                 */
 		        IF NOT EXISTS (SELECT 1 FROM #SkipCheck AS SC WHERE SC.CheckId = @CheckId AND SC.ObjectName IS NULL)
@@ -865,11 +865,11 @@ AS
 		                                LEFT(O.name COLLATE SQL_Latin1_General_CP1_CI_AS, 6) IN (''covix_'', ''ncldx_'', ''clidx_'')
                                         OR LEFT(O.name COLLATE SQL_Latin1_General_CP1_CI_AS, 5) IN (''pknc_'', ''ncak_'', ''clix_'', ''_dta_'')
                                         OR LEFT(O.name COLLATE SQL_Latin1_General_CP1_CI_AS, 4) IN (''tab_'', ''pkc_'', ''idx_'', ''cak_'', ''unq_'', ''chk_'', ''ftx_'', ''gis_'', ''trg_'')
-			                            OR LEFT(O.name COLLATE SQL_Latin1_General_CP1_CI_AS, 3) IN (''tbl'', ''sp_'', ''xp_'', ''dt_'', ''fn_'', ''tr_'', ''usr'', ''uc_'', ''nk_'', ''ak_'', ''nc_'', ''ux_'', ''uk_'', ''fk_'', ''uq_'')
+			                            OR LEFT(O.name COLLATE SQL_Latin1_General_CP1_CI_AS, 3) IN (''xp_'', ''dt_'', ''fn_'', ''tr_'', ''usr'', ''uc_'', ''nk_'', ''ak_'', ''nc_'', ''ux_'', ''uk_'', ''fk_'', ''uq_'')
 			                            OR LEFT(O.name COLLATE SQL_Latin1_General_CP1_CI_AS, 2) IN (''tb'', ''t_'', ''p_'', ''f_'')
 							            OR O.name LIKE ''[v][A-Z]%'' COLLATE Latin1_General_BIN
 							            OR O.name LIKE ''[t][A-Z]%'' COLLATE Latin1_General_BIN
-							            OR O.name LIKE ''[s][p][A-Z]%'' COLLATE Latin1_General_BIN
+							            /* OR O.name LIKE ''[s][p][A-Z]%'' COLLATE Latin1_General_BIN */
 							            OR O.name LIKE ''[t][r][A-Z]%'' COLLATE Latin1_General_BIN
 						            )
                             OPTION (RECOMPILE);';
